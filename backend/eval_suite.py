@@ -1,5 +1,5 @@
 """
-CodeFlow Agent Phase 1 Evaluation Harness.
+CodeFlow Agent Phase 1.1 Evaluation Harness.
 
 Evaluates behavioral proof, counterexamples, adaptive mutation testing,
 security non-regression, and the evidence-backed ship gate.
@@ -45,13 +45,17 @@ async def run_case(agent: CodeFlowAgent, case: dict) -> dict:
         "attempts": 0,
         "complexity_before": None,
         "complexity_after": None,
-        "critic_approved": False,
+        "critic_status": "NOT_RUN",
         "invariants_discovered": 0,
         "invariants_preserved": 0,
+        "invariants_unverified": 0,
+        "invariant_status": "NOT_RUN",
         "counterexamples": 0,
+        "mutation_status": "NOT_RUN",
         "mutation_score_pct": None,
-        "security_non_regression": False,
+        "security_status": "NOT_RUN",
         "proof_status": "UNKNOWN",
+        "termination": "UNKNOWN",
     }
 
     async for update in agent.run_correction_loop(prompt="", initial_code=case["code"]):
@@ -59,91 +63,114 @@ async def run_case(agent: CodeFlowAgent, case: dict) -> dict:
             result["attempts"] = max(result["attempts"], update.get("attempt", 0))
 
         if update.get("step") == "invariants":
-            if update.get("invariants"):
-                result["invariants_discovered"] = len(update["invariants"])
-            if update.get("invariant_results"):
-                result["invariants_preserved"] = sum(
-                    1 for item in update["invariant_results"]
-                    if item.get("status") == "preserved"
-                )
-            if update.get("counterexamples") is not None:
-                result["counterexamples"] = len(update.get("counterexamples", []))
+            if "invariants" in update:
+                result["invariants_discovered"] = len(update.get("invariants") or [])
+            if "invariant_results" in update:
+                items = update.get("invariant_results") or []
+                regressions = update.get("counterexamples") or []
+                result["invariants_preserved"] = sum(1 for item in items if item.get("status") == "preserved")
+                result["invariants_unverified"] = sum(1 for item in items if item.get("status") == "unverified")
+                result["counterexamples"] = len(regressions)
+                if regressions:
+                    result["invariant_status"] = "FAIL"
+                elif not items:
+                    result["invariant_status"] = "NOT_RUN"
+                elif result["invariants_unverified"]:
+                    result["invariant_status"] = "PARTIAL"
+                elif result["invariants_preserved"] == result["invariants_discovered"]:
+                    result["invariant_status"] = "PASS"
+                else:
+                    result["invariant_status"] = "PARTIAL"
 
         if update.get("step") == "metrics" and result["complexity_before"] is None:
             result["complexity_before"] = (update.get("metrics_before") or {}).get("avg_complexity")
 
-        if update.get("step") == "critic" and update.get("approved"):
-            result["critic_approved"] = True
+        if update.get("step") == "critic" and "approved" in update:
+            result["critic_status"] = "PASS" if update["approved"] else "FAIL"
 
         if update.get("step") == "mutation" and update.get("mutation_score_pct") is not None:
             result["mutation_score_pct"] = update["mutation_score_pct"]
+            result["mutation_status"] = "PASS" if update["mutation_score_pct"] >= 80.0 else "FAIL"
 
         if update.get("step") == "report":
             report = update.get("report", {})
+            gate = report.get("ship_gate") or {}
+            mutation = report.get("mutation") or {}
             result["success"] = report.get("proof_status") == "PROVEN"
             result["proof_status"] = report.get("proof_status", "UNKNOWN")
+            result["termination"] = "PROVEN" if result["success"] else "BLOCKED"
             result["complexity_after"] = (report.get("metrics_after") or {}).get("avg_complexity")
-            result["security_non_regression"] = (report.get("ship_gate") or {}).get(
-                "security_non_regression", False
-            )
-            result["mutation_score_pct"] = (report.get("mutation") or {}).get(
-                "score_pct", result["mutation_score_pct"]
-            )
+            result["security_status"] = "PASS" if gate.get("security_non_regression") else "FAIL"
+            if mutation.get("score_pct") is not None:
+                result["mutation_score_pct"] = mutation["score_pct"]
+                result["mutation_status"] = "PASS" if mutation["score_pct"] >= 80.0 else "FAIL"
 
+    if result["termination"] == "UNKNOWN":
+        result["termination"] = "EXHAUSTED"
     return result
 
 
 async def main():
     sandbox = SandboxExecutor()
     agent = CodeFlowAgent(sandbox=sandbox)
-
     report = []
+
     for case in CASES:
         print(f"\n▶ Evaluating: {case['name']}")
         r = await run_case(agent, case)
         report.append(r)
-        status = "✅ PROVEN" if r["success"] else "❌ BLOCKED"
+        mutation = f"{r['mutation_score_pct']}%" if r["mutation_status"] != "NOT_RUN" else "NOT_RUN"
+        status = "PROVEN" if r["success"] else r["termination"]
         print(
-            f"   {status} | attempts={r['attempts']} | "
-            f"invariants={r['invariants_preserved']}/{r['invariants_discovered']} | "
-            f"counterexamples={r['counterexamples']} | "
-            f"mutation={r['mutation_score_pct']}% | "
-            f"security={'PASS' if r['security_non_regression'] else 'FAIL'}"
+            f"   {'✅' if r['success'] else '❌'} {status} | attempts={r['attempts']} | "
+            f"invariants={r['invariants_preserved']}/{r['invariants_discovered']} ({r['invariant_status']}) | "
+            f"counterexamples={r['counterexamples']} | mutation={mutation} ({r['mutation_status']}) | "
+            f"security={r['security_status']} | critic={r['critic_status']}"
         )
 
     total = len(report)
-    passed = sum(1 for r in report if r["success"])
+    proven = sum(r["success"] for r in report)
     discovered = sum(r["invariants_discovered"] for r in report)
     preserved = sum(r["invariants_preserved"] for r in report)
+    mutation_scores = [r["mutation_score_pct"] for r in report if r["mutation_status"] != "NOT_RUN"]
+    security_evaluated = [r for r in report if r["security_status"] != "NOT_RUN"]
 
     summary = {
         "total_cases": total,
-        "proven": passed,
-        "proof_rate_pct": round(passed / total * 100, 1),
-        "avg_attempts": round(sum(r["attempts"] for r in report) / total, 2),
-        "critic_approval_rate_pct": round(
-            sum(1 for r in report if r["critic_approved"]) / total * 100, 1
-        ),
-        "invariants_discovered": discovered,
-        "invariants_preserved": preserved,
-        "invariant_preservation_pct": round(
-            preserved / discovered * 100, 1
-        ) if discovered else None,
-        "avg_mutation_score_pct": round(
-            sum((r["mutation_score_pct"] or 0) for r in report) / total, 1
-        ),
-        "security_non_regression_rate_pct": round(
-            sum(1 for r in report if r["security_non_regression"]) / total * 100, 1
-        ),
+        "proven": proven,
+        "proof_rate_pct": round(proven / total * 100, 1) if total else None,
+        "avg_attempts": round(sum(r["attempts"] for r in report) / total, 2) if total else None,
+        "critic": {k: sum(r["critic_status"] == k for r in report) for k in ["PASS", "FAIL", "NOT_RUN"]},
+        "invariants": {
+            "discovered": discovered,
+            "preserved": preserved,
+            "unverified": sum(r["invariants_unverified"] for r in report),
+            "preservation_pct": round(preserved / discovered * 100, 1) if discovered else None,
+            "verification_status": {k: sum(r["invariant_status"] == k for r in report) for k in ["PASS", "FAIL", "PARTIAL", "NOT_RUN"]},
+        },
+        "mutation": {
+            "evaluated_cases": len(mutation_scores),
+            "not_run_cases": sum(r["mutation_status"] == "NOT_RUN" for r in report),
+            "passed_cases": sum(r["mutation_status"] == "PASS" for r in report),
+            "failed_cases": sum(r["mutation_status"] == "FAIL" for r in report),
+            "avg_score_pct": round(sum(mutation_scores) / len(mutation_scores), 1) if mutation_scores else None,
+        },
+        "security": {
+            "evaluated_cases": len(security_evaluated),
+            "not_run_cases": sum(r["security_status"] == "NOT_RUN" for r in report),
+            "passed_cases": sum(r["security_status"] == "PASS" for r in report),
+            "failed_cases": sum(r["security_status"] == "FAIL" for r in report),
+            "pass_rate_pct": round(sum(r["security_status"] == "PASS" for r in security_evaluated) / len(security_evaluated) * 100, 1) if security_evaluated else None,
+        },
+        "termination": {k: sum(r["termination"] == k for r in report) for k in ["PROVEN", "BLOCKED", "EXHAUSTED"]},
     }
 
     with open("eval_report.json", "w") as f:
-        json.dump({"summary": summary, "cases": report}, f, indent=2)
+        json.dump({"phase": "1.1", "summary": summary, "cases": report}, f, indent=2)
 
-    print("\n========== PHASE 1 EVAL SUMMARY ==========")
+    print("\n========== PHASE 1.1 EVAL SUMMARY ==========")
     print(json.dumps(summary, indent=2))
     print("Full report saved to eval_report.json")
-
 
 if __name__ == "__main__":
     asyncio.run(main())
