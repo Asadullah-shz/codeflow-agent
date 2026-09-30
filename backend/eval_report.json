@@ -1,0 +1,51 @@
+{
+  "summary": {
+    "total_cases": 5,
+    "passed": 5,
+    "success_rate_pct": 100.0,
+    "avg_attempts": 1.8,
+    "critic_approval_rate_pct": 100.0
+  },
+  "cases": [
+    {
+      "name": "nested_calculator",
+      "success": true,
+      "attempts": 2,
+      "complexity_before": 6.0,
+      "complexity_after": 7.0,
+      "critic_approved": true
+    },
+    {
+      "name": "palindrome_edge_cases",
+      "success": true,
+      "attempts": 2,
+      "complexity_before": 1.0,
+      "complexity_after": 1.0,
+      "critic_approved": true
+    },
+    {
+      "name": "messy_class",
+      "success": true,
+      "attempts": 3,
+      "complexity_before": 2.0,
+      "complexity_after": 1.67,
+      "critic_approved": true
+    },
+    {
+      "name": "mutable_default_bug",
+      "success": true,
+      "attempts": 1,
+      "complexity_before": 1.0,
+      "complexity_after": 2.0,
+      "critic_approved": true
+    },
+    {
+      "name": "string_builder",
+      "success": true,
+      "attempts": 1,
+      "complexity_before": 2.0,
+      "complexity_after": 2.0,
+      "critic_approved": true
+    }
+  ]
+}
