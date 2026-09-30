@@ -272,7 +272,12 @@ class CodeFlowAgent:
         yield {"step": "metrics", "message": "📊 Analyzing legacy code quality (radon + pyflakes)..."}
         metrics_before = await asyncio.to_thread(self.sandbox.analyze, initial_code)
         security_before = await asyncio.to_thread(self.sandbox.security_scan, initial_code)
-        yield {"step": "security", "message": f"🛡️ Legacy security scan: {security_before.get('issues', 0)} issue(s).", "security_before": security_before}
+        security_baseline_ok = bool(security_before.get("ok", False))
+        yield {
+            "step": "security",
+            "message": f"🛡️ Legacy security scan: {security_before.get('issues', 0)} issue(s).",
+            "security_before": security_before,
+        }
         yield {"step": "metrics", "message": f"Legacy metrics: complexity={metrics_before.get('avg_complexity')}, lint={metrics_before.get('lint_issues')}", "metrics_before": metrics_before}
 
         last_error = ""
@@ -378,7 +383,8 @@ class CodeFlowAgent:
             security_after = await asyncio.to_thread(self.sandbox.security_scan, refactored_code)
             security_scan_ok = bool(security_after.get("ok", False))
             security_regression = (
-                not security_scan_ok
+                not security_baseline_ok
+                or not security_scan_ok
                 or security_after.get("issues", 0) > security_before.get("issues", 0)
             )
             yield {
