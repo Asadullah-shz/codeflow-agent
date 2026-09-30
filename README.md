@@ -265,3 +265,19 @@ python eval_suite.py
 ```
 
 The evaluation report now includes proof rate, invariant discovery/preservation, counterexamples, mutation score, security non-regression, and attempts per case.
+
+
+### Phase 1.2 — Executable Behavioral Probe Repair
+
+Phase 1.2 extends differential invariant verification with an **adaptive executable-probe repair loop**. When a generated invariant test cannot establish the behavior of the legacy implementation, CodeFlow Agent retains the failed probe and exact sandbox evidence, then asks a dedicated test-engineering pass to repair the probe against the legacy behavior before re-running differential verification.
+
+This prevents an LLM-generated invariant from becoming an uninformative `UNVERIFIED` state merely because its first test was malformed or mismatched with the legacy API.
+
+Evidence captured per unverified probe includes:
+- invariant ID and behavioral description
+- executable pytest probe
+- legacy execution failure
+- subsequent differential preservation/regression result
+- concrete regression test when the refactor changes observable behavior
+
+The proof gate remains strict: repaired probes must establish preservation; unverified invariants still block proof.
