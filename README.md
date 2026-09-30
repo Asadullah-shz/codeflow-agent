@@ -215,3 +215,53 @@ Built by **[Asadullah Shahbaz](https://github.com/AsadullahShahbaz)** — Full-S
 ## 📄 License
 
 MIT — free to use, fork, and learn from.
+
+## Phase 1 — Evidence-Driven Verification
+
+CodeFlow Agent now goes beyond pass/fail testing with an evidence-oriented verification layer:
+
+- **Behavioral Invariant Discovery** — the agent first asks a dedicated legacy-code archaeologist to identify observable behaviors worth preserving.
+- **Differential Invariant Verification** — discovered tests are executed against both the legacy and refactored implementations. A behavior that passes in the legacy version but fails after refactoring becomes a concrete regression.
+- **Counterexamples** — invariant regressions retain the exact failing test and sandbox output so the next agent attempt receives a concrete failure case instead of a vague critique.
+- **Adaptive Mutation Testing** — mutation results now identify the surviving mutant, source location, and mutation type. Surviving mutants trigger a targeted test-strengthening pass before another verification attempt.
+- **Evidence-Backed Refactoring Proof** — the final report records invariant preservation, security non-regression, mutation score, test success, and an explicit ship gate.
+- **Human approval remains mandatory** — passing automated evidence does not automatically authorize the Git commit.
+
+### Phase 1 Verification Flow
+
+```
+Legacy Code
+    ↓
+Invariant Discovery
+    ↓
+AI Refactor + Tests
+    ↓
+Isolated Sandbox
+    ↓
+Differential Invariant Verification
+    ↓
+Adversarial Critic
+    ↓
+Security Regression Gate
+    ↓
+Adaptive Mutation Campaign
+    ↓
+Surviving Mutant → Targeted Test Generation → Retry
+    ↓
+Evidence-Backed Ship Gate
+    ↓
+Human Approval
+    ↓
+Git Commit
+```
+
+### Phase 1 Evaluation
+
+Run the updated benchmark with:
+
+```bash
+cd backend
+python eval_suite.py
+```
+
+The evaluation report now includes proof rate, invariant discovery/preservation, counterexamples, mutation score, security non-regression, and attempts per case.
