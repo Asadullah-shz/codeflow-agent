@@ -123,34 +123,33 @@ class SandboxExecutor:
             return {}
 
     def security_scan(self, code: str) -> dict:
-        """Runs bandit vulnerability scan inside the sandbox."""
+        """Run Bandit inside the sandbox and report whether the scan itself succeeded."""
+        base = {"ok": False, "issues": 0, "high": 0, "medium": 0, "low": 0}
+
         if not self.client:
-            return {}
+            return {**base, "error": "Docker is not running."}
+
         try:
             self.ensure_image()
-        except Exception:
-            return {}
+        except Exception as exc:
+            return {**base, "error": f"Sandbox image unavailable: {exc}"}
+
         extra = "cd /app && python -m bandit -q -f json main.py 2>/dev/null || true"
         result = self._write_and_run(code, extra, timeout=20)
         out = result["output"]
         s, e = out.find("{"), out.rfind("}")
         if s == -1 or e == -1:
-            return {
-                "ok": False,
-                "issues": 0,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "error": "Bandit returned no parseable JSON.",
-            }
+            return {**base, "error": "Bandit returned no parseable JSON."}
+
         try:
             data = json.loads(out[s:e + 1])
             issues = data.get("results", [])
             return {
+                "ok": True,
                 "issues": len(issues),
                 "high": sum(1 for i in issues if i.get("issue_severity") == "HIGH"),
                 "medium": sum(1 for i in issues if i.get("issue_severity") == "MEDIUM"),
                 "low": sum(1 for i in issues if i.get("issue_severity") == "LOW"),
             }
-        except Exception:
-            return {"issues": 0, "high": 0, "medium": 0, "low": 0}
+        except Exception as exc:
+            return {**base, "error": f"Bandit JSON parse failed: {exc}"}
