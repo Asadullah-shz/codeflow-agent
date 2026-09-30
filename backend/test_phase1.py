@@ -1,6 +1,8 @@
 """Unit tests for CodeFlow Agent Phase 1 primitives."""
 
 from invariants import parse_invariants, normalize_test_imports, public_names_from_code
+from agent import parse_critic
+from sandbox import SandboxExecutor
 from mutants import generate_mutant_cases
 
 
@@ -65,3 +67,17 @@ def test_unverified_invariant_keeps_executable_probe_evidence():
     assert results[0]["status"] == "unverified"
     assert results[0]["test_code"] == invariants[0]["test_code"]
     assert results[0]["legacy_failure"] == "legacy probe failed"
+
+
+def test_critic_parser_fails_closed_on_invalid_output():
+    approved, feedback = parse_critic("not valid critic JSON")
+    assert approved is False
+    assert "valid JSON" in feedback
+
+
+def test_security_scan_reports_unavailable_docker():
+    sandbox = SandboxExecutor.__new__(SandboxExecutor)
+    sandbox.client = None
+    result = sandbox.security_scan("def example():\n    return 1")
+    assert result["ok"] is False
+    assert "Docker" in result["error"]
