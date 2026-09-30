@@ -105,11 +105,11 @@ class SandboxExecutor:
 
     def analyze(self, code: str) -> dict:
         if not self.client:
-            return {}
+            return {"ok": False, "error": "Docker is not running."}
         try:
             self.ensure_image()
-        except Exception:
-            return {}
+        except Exception as exc:
+            return {"ok": False, "error": f"Sandbox image unavailable: {exc}"}
         ea = base64.b64encode(ANALYZER_SCRIPT.encode()).decode()
         extra = f"echo '{ea}' | base64 -d > /app/_analyze.py && cd /app && python _analyze.py 2>/dev/null"
         result = self._write_and_run(code, extra, timeout=15)
@@ -135,7 +135,14 @@ class SandboxExecutor:
         out = result["output"]
         s, e = out.find("{"), out.rfind("}")
         if s == -1 or e == -1:
-            return {"issues": 0, "high": 0, "medium": 0, "low": 0}
+            return {
+                "ok": False,
+                "issues": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "error": "Bandit returned no parseable JSON.",
+            }
         try:
             data = json.loads(out[s:e + 1])
             issues = data.get("results", [])
