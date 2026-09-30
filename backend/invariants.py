@@ -108,6 +108,8 @@ def verify_invariants(
                 "description": inv["description"],
                 "status": "unverified",
                 "reason": "Invariant test did not pass against the legacy implementation.",
+                "test_code": inv["test_code"],
+                "legacy_failure": legacy_result.get("output", "")[:1200],
             })
             continue
 
