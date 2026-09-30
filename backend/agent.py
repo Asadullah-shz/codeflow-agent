@@ -361,9 +361,22 @@ class CodeFlowAgent:
                 continue
 
             invariant_regressions = len(last_regressions)
+            invariant_unverified = sum(
+                1 for item in last_invariant_results
+                if item.get("status") == "unverified"
+            )
+            invariant_preserved = sum(
+                1 for item in last_invariant_results
+                if item.get("status") == "preserved"
+            )
+            invariant_gate = (
+                invariant_regressions == 0
+                and invariant_unverified == 0
+                and invariant_preserved == len(invariants)
+            )
             mutation_gate = mutation_score >= 80.0 or not mutation_cases
             ship_gate = {
-                "behavioral_invariants": invariant_regressions == 0,
+                "behavioral_invariants": invariant_gate,
                 "security_non_regression": not security_regression,
                 "mutation_threshold": mutation_gate,
                 "tests_pass": True,
@@ -377,6 +390,8 @@ class CodeFlowAgent:
                 "security_after": security_after,
                 "invariants": {
                     "discovered": len(invariants),
+                    "preserved": invariant_preserved,
+                    "unverified": invariant_unverified,
                     "results": last_invariant_results,
                     "counterexamples": last_regressions,
                 },
