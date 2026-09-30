@@ -61,6 +61,19 @@ or
 {"approved": false, "feedback": "specific defect and why it matters"}
 """
 
+INVARIANT_REPAIR_PROMPT = """You are a behavioral test archaeologist.
+A candidate invariant test failed against the ORIGINAL legacy implementation. Repair only the test so it proves the stated observable behavior of the legacy code.
+
+Return ONLY the complete pytest test code. No markdown fences or prose.
+
+Rules:
+- The test must pass against the supplied legacy implementation.
+- Exercise public behavior only.
+- Keep it deterministic and fast.
+- Do not alter the implementation.
+- Do not use network, subprocess, filesystem writes, or environment mutation.
+"""
+
 TEST_STRENGTHENER_PROMPT = """You are a test-engineering specialist.
 A refactored Python implementation has surviving mutation tests. Strengthen the pytest suite so the supplied surviving mutants are detected.
 
@@ -174,6 +187,33 @@ class CodeFlowAgent:
             logger.warning("Invariant discovery failed: %s", exc)
             return []
 
+    async def _repair_unverified_invariants(self, legacy_code: str, invariants: list, results: list, total_tokens: dict):
+        repaired = []
+        by_id = {item.get("id"): item for item in results if item.get("status") == "unverified"}
+        for inv in invariants:
+            item = by_id.get(inv.get("id"))
+            if not item:
+                repaired.append(inv)
+                continue
+            try:
+                raw, tokens = await self._generate([
+                    {"role": "system", "content": INVARIANT_REPAIR_PROMPT},
+                    {"role": "user", "content": (
+                        f"ORIGINAL LEGACY CODE:\\n{legacy_code}\\n\\n"
+                        f"INVARIANT:\\n{inv.get('description','')}\\n\\n"
+                        f"FAILED TEST:\\n{item.get('test_code','')}\\n\\n"
+                        f"LEGACY FAILURE:\\n{item.get('legacy_failure','')}"
+                    )},
+                ])
+                total_tokens["prompt"] += tokens["prompt"]
+                total_tokens["completion"] += tokens["completion"]
+                test = clean_markdown(raw)
+                repaired.append({**inv, "test_code": test} if test else inv)
+            except Exception as exc:
+                logger.warning("Invariant probe repair failed for %s: %s", inv.get("id"), exc)
+                repaired.append(inv)
+        return repaired
+
     async def _strengthen_tests(self, refactored_code: str, test_code: str, survivors: list, total_tokens: dict):
         survivor_text = "\n".join(
             f"{m['id']} at line {m['line']}: {m['description']}" for m in survivors
@@ -279,6 +319,13 @@ class CodeFlowAgent:
                 last_invariant_results, last_regressions = await asyncio.to_thread(
                     verify_invariants, self.sandbox, initial_code, refactored_code, invariants
                 )
+                unverified = [x for x in last_invariant_results if x.get("status") == "unverified"]
+                if unverified and attempt < self.max_attempts:
+                    yield {"step": "invariants", "message": f"🧪 {len(unverified)} invariant probe(s) failed on legacy behavior; repairing executable probes..."}
+                    invariants = await self._repair_unverified_invariants(initial_code, invariants, last_invariant_results, total_tokens)
+                    last_invariant_results, last_regressions = await asyncio.to_thread(
+                        verify_invariants, self.sandbox, initial_code, refactored_code, invariants
+                    )
                 preserved = sum(1 for x in last_invariant_results if x.get("status") == "preserved")
                 yield {
                     "step": "invariants",
