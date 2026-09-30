@@ -1,12 +1,12 @@
 """
-CodeFlow Agent Evaluation Harness
-Benchmarks the multi-agent pipeline across legacy code cases.
-Outputs: console table + eval_report.json
+CodeFlow Agent Phase 1 Evaluation Harness.
+
+Evaluates behavioral proof, counterexamples, adaptive mutation testing,
+security non-regression, and the evidence-backed ship gate.
 """
 
 import asyncio
 import json
-import os
 
 from dotenv import load_dotenv
 from agent import CodeFlowAgent
@@ -46,17 +46,50 @@ async def run_case(agent: CodeFlowAgent, case: dict) -> dict:
         "complexity_before": None,
         "complexity_after": None,
         "critic_approved": False,
+        "invariants_discovered": 0,
+        "invariants_preserved": 0,
+        "counterexamples": 0,
+        "mutation_score_pct": None,
+        "security_non_regression": False,
+        "proof_status": "UNKNOWN",
     }
+
     async for update in agent.run_correction_loop(prompt="", initial_code=case["code"]):
         if update.get("step") == "coding":
             result["attempts"] = max(result["attempts"], update.get("attempt", 0))
+
+        if update.get("step") == "invariants":
+            if update.get("invariants"):
+                result["invariants_discovered"] = len(update["invariants"])
+            if update.get("invariant_results"):
+                result["invariants_preserved"] = sum(
+                    1 for item in update["invariant_results"]
+                    if item.get("status") == "preserved"
+                )
+            if update.get("counterexamples") is not None:
+                result["counterexamples"] = len(update.get("counterexamples", []))
+
         if update.get("step") == "metrics" and result["complexity_before"] is None:
             result["complexity_before"] = (update.get("metrics_before") or {}).get("avg_complexity")
+
         if update.get("step") == "critic" and update.get("approved"):
             result["critic_approved"] = True
-        if update.get("step") == "success":
-            result["success"] = True
-            result["complexity_after"] = (update.get("metrics_after") or {}).get("avg_complexity")
+
+        if update.get("step") == "mutation" and update.get("mutation_score_pct") is not None:
+            result["mutation_score_pct"] = update["mutation_score_pct"]
+
+        if update.get("step") == "report":
+            report = update.get("report", {})
+            result["success"] = report.get("proof_status") == "PROVEN"
+            result["proof_status"] = report.get("proof_status", "UNKNOWN")
+            result["complexity_after"] = (report.get("metrics_after") or {}).get("avg_complexity")
+            result["security_non_regression"] = (report.get("ship_gate") or {}).get(
+                "security_non_regression", False
+            )
+            result["mutation_score_pct"] = (report.get("mutation") or {}).get(
+                "score_pct", result["mutation_score_pct"]
+            )
+
     return result
 
 
@@ -69,23 +102,45 @@ async def main():
         print(f"\n▶ Evaluating: {case['name']}")
         r = await run_case(agent, case)
         report.append(r)
-        status = "✅ PASS" if r["success"] else "❌ FAIL"
-        print(f"   {status} | attempts={r['attempts']} | complexity {r['complexity_before']} → {r['complexity_after']} | critic={'✔' if r['critic_approved'] else '✘'}")
+        status = "✅ PROVEN" if r["success"] else "❌ BLOCKED"
+        print(
+            f"   {status} | attempts={r['attempts']} | "
+            f"invariants={r['invariants_preserved']}/{r['invariants_discovered']} | "
+            f"counterexamples={r['counterexamples']} | "
+            f"mutation={r['mutation_score_pct']}% | "
+            f"security={'PASS' if r['security_non_regression'] else 'FAIL'}"
+        )
 
     total = len(report)
     passed = sum(1 for r in report if r["success"])
+    discovered = sum(r["invariants_discovered"] for r in report)
+    preserved = sum(r["invariants_preserved"] for r in report)
+
     summary = {
         "total_cases": total,
-        "passed": passed,
-        "success_rate_pct": round(passed / total * 100, 1),
+        "proven": passed,
+        "proof_rate_pct": round(passed / total * 100, 1),
         "avg_attempts": round(sum(r["attempts"] for r in report) / total, 2),
-        "critic_approval_rate_pct": round(sum(1 for r in report if r["critic_approved"]) / total * 100, 1),
+        "critic_approval_rate_pct": round(
+            sum(1 for r in report if r["critic_approved"]) / total * 100, 1
+        ),
+        "invariants_discovered": discovered,
+        "invariants_preserved": preserved,
+        "invariant_preservation_pct": round(
+            preserved / discovered * 100, 1
+        ) if discovered else None,
+        "avg_mutation_score_pct": round(
+            sum((r["mutation_score_pct"] or 0) for r in report) / total, 1
+        ),
+        "security_non_regression_rate_pct": round(
+            sum(1 for r in report if r["security_non_regression"]) / total * 100, 1
+        ),
     }
 
     with open("eval_report.json", "w") as f:
         json.dump({"summary": summary, "cases": report}, f, indent=2)
 
-    print("\n========== EVAL SUMMARY ==========")
+    print("\n========== PHASE 1 EVAL SUMMARY ==========")
     print(json.dumps(summary, indent=2))
     print("Full report saved to eval_report.json")
 
