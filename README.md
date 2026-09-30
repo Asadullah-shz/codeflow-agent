@@ -84,22 +84,32 @@ Most AI coding tools **generate code and hope it works**. They hallucinate impor
 
 ## 📊 Evaluation Results
 
-Benchmarked with the built-in evaluation harness (`eval_suite.py`) across 5 adversarial legacy-code cases (nested conditionals, edge-case traps, mutable-default bugs, class refactors):
+The repository includes a reproducible evaluation harness for the evidence-driven verification pipeline. **Final benchmark numbers are intentionally not hard-coded here until the implementation is frozen and the final evaluation is run with the configured LLM provider.**
 
-| Metric | Result |
-|---|---|
-| **Success Rate** | **100.0%** (5/5 cases) |
-| **Avg Attempts to Resolution** | **1.8** |
-| **Critic Approval Rate** | **100.0%** |
-| **Sandbox** | Network-isolated, 256MB-capped ephemeral containers |
+The previously recorded Phase 1.1 baseline was:
 
-Reproduce locally:
+| Metric | Phase 1.1 baseline |
+|---|---:|
+| Cases | 5 |
+| Proven | 1/5 |
+| Proof rate | 20.0% |
+| Average attempts | 2.4 |
+| Invariants discovered | 24 |
+| Invariants preserved | 5 |
+| Mutation average | 87.5% across evaluated cases |
+| Security pass rate | 100% across evaluated cases |
+
+These figures are historical engineering evidence, not the final v3 benchmark. Provider/API failures are now classified separately as `API_ERROR` rather than being counted as exhausted agent attempts.
+
+Reproduce locally after the provider quota is available:
+
 ```bash
-cd backend && python eval_suite.py   # writes eval_report.json
+cd backend
+python -m pytest test_phase1.py -v
+python eval_suite.py
 ```
 
----
-
+The final `eval_report.json` should be used as the source of truth for the shipped benchmark.
 ## 🧠 Key Engineering Decisions
 
 ### 1. Deterministic Guardrails Around Non-Deterministic Models
