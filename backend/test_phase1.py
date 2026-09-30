@@ -39,3 +39,29 @@ def test_mutation_description_identifies_operator_change():
     code = "def calculate(a, b):\n    return a + b\n"
     mutants = generate_mutant_cases(code)
     assert any("Add" in m["description"] and "Sub" in m["description"] for m in mutants)
+
+
+def test_unverified_invariant_keeps_executable_probe_evidence():
+    from invariants import verify_invariants
+
+    class FakeSandbox:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, code, test_code):
+            self.calls.append(test_code)
+            return {"success": False, "output": "legacy probe failed"}
+
+    sandbox = FakeSandbox()
+    invariants = [{
+        "id": "INV-001",
+        "name": "boundary",
+        "description": "boundary behavior",
+        "test_code": "def test_boundary():\n    assert True",
+    }]
+    results, regressions = verify_invariants(sandbox, "def calc(x): return x", "def calc(x): return x", invariants)
+
+    assert regressions == []
+    assert results[0]["status"] == "unverified"
+    assert results[0]["test_code"] == invariants[0]["test_code"]
+    assert results[0]["legacy_failure"] == "legacy probe failed"
