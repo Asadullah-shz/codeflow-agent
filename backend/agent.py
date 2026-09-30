@@ -110,14 +110,17 @@ def parse_response(text: str) -> Tuple[str, str]:
 
 
 def parse_critic(text: str) -> Tuple[bool, str]:
+    """Parse critic output with fail-closed behavior."""
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
-        return True, "Critic response unparseable; auto-approved."
+        return False, "Critic response was missing valid JSON."
     try:
         data = json.loads(m.group(0))
-        return bool(data.get("approved", True)), str(data.get("feedback", ""))
     except Exception:
-        return True, "Critic response unparseable; auto-approved."
+        return False, "Critic response contained invalid JSON."
+    if not isinstance(data, dict) or "approved" not in data:
+        return False, "Critic response omitted the required 'approved' field."
+    return bool(data["approved"]), str(data.get("feedback", ""))
 
 
 def _pick_primary_name(names: List[str], legacy_code: str) -> Optional[str]:
@@ -185,7 +188,7 @@ class CodeFlowAgent:
             return parse_invariants(raw)
         except Exception as exc:
             logger.warning("Invariant discovery failed: %s", exc)
-            return []
+            raise
 
     async def _repair_unverified_invariants(self, legacy_code: str, invariants: list, results: list, total_tokens: dict):
         repaired = []
@@ -250,7 +253,16 @@ class CodeFlowAgent:
         yield {"step": "thinking", "attempt": 0, "message": "Starting CodeFlow Agent v3 — evidence-driven verification."}
 
         yield {"step": "invariants", "message": "🔎 Discovering behavioral invariants from legacy code..."}
-        invariants = await self._discover_invariants(initial_code, total_tokens)
+        try:
+            invariants = await self._discover_invariants(initial_code, total_tokens)
+        except Exception as exc:
+            logger.error("Invariant discovery API error: %s", exc)
+            yield {
+                "step": "error",
+                "error_type": "LLM_API_ERROR",
+                "message": f"❌ LLM API error during invariant discovery: {exc}",
+            }
+            return
         yield {
             "step": "invariants",
             "message": f"🔎 Discovered {len(invariants)} candidate behavioral invariants.",
@@ -364,7 +376,11 @@ class CodeFlowAgent:
                 continue
 
             security_after = await asyncio.to_thread(self.sandbox.security_scan, refactored_code)
-            security_regression = security_after.get("issues", 0) > security_before.get("issues", 0)
+            security_scan_ok = bool(security_after.get("ok", False))
+            security_regression = (
+                not security_scan_ok
+                or security_after.get("issues", 0) > security_before.get("issues", 0)
+            )
             yield {
                 "step": "security",
                 "message": "🚫 Security regression detected." if security_regression else f"🛡️ Security gate passed: {security_after.get('issues', 0)} issue(s).",
@@ -424,7 +440,7 @@ class CodeFlowAgent:
             mutation_gate = mutation_score >= 80.0 or not mutation_cases
             ship_gate = {
                 "behavioral_invariants": invariant_gate,
-                "security_non_regression": not security_regression,
+                "security_non_regression": security_scan_ok and not security_regression,
                 "mutation_threshold": mutation_gate,
                 "tests_pass": True,
             }
