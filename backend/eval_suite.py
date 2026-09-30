@@ -1,5 +1,5 @@
 """
-CodeFlow Agent Phase 1.1 Evaluation Harness.
+CodeFlow Agent Phase 1.2 Evaluation Harness.
 
 Evaluates behavioral proof, counterexamples, adaptive mutation testing,
 security non-regression, and the evidence-backed ship gate.
@@ -56,9 +56,17 @@ async def run_case(agent: CodeFlowAgent, case: dict) -> dict:
         "security_status": "NOT_RUN",
         "proof_status": "UNKNOWN",
         "termination": "UNKNOWN",
+        "error_type": None,
+        "error_message": None,
     }
 
     async for update in agent.run_correction_loop(prompt="", initial_code=case["code"]):
+        if update.get("step") == "error":
+            message = str(update.get("message", "LLM API error"))
+            result["error_type"] = "LLM_API_ERROR"
+            result["error_message"] = message[:500]
+            result["termination"] = "API_ERROR"
+            continue
         if update.get("step") == "coding":
             result["attempts"] = max(result["attempts"], update.get("attempt", 0))
 
@@ -162,13 +170,20 @@ async def main():
             "failed_cases": sum(r["security_status"] == "FAIL" for r in report),
             "pass_rate_pct": round(sum(r["security_status"] == "PASS" for r in security_evaluated) / len(security_evaluated) * 100, 1) if security_evaluated else None,
         },
-        "termination": {k: sum(r["termination"] == k for r in report) for k in ["PROVEN", "BLOCKED", "EXHAUSTED"]},
+        "termination": {k: sum(r["termination"] == k for r in report) for k in ["PROVEN", "BLOCKED", "EXHAUSTED", "API_ERROR"]},
+        "api_errors": {
+            "cases": sum(r["termination"] == "API_ERROR" for r in report),
+            "error_types": {
+                k: sum(r["error_type"] == k for r in report)
+                for k in sorted({r["error_type"] for r in report if r["error_type"]})
+            },
+        },
     }
 
     with open("eval_report.json", "w") as f:
-        json.dump({"phase": "1.1", "summary": summary, "cases": report}, f, indent=2)
+        json.dump({"phase": "1.2", "summary": summary, "cases": report}, f, indent=2)
 
-    print("\n========== PHASE 1.1 EVAL SUMMARY ==========")
+    print("\n========== PHASE 1.2 EVAL SUMMARY ==========")
     print(json.dumps(summary, indent=2))
     print("Full report saved to eval_report.json")
 
